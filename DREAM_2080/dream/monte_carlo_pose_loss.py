@@ -34,5 +34,13 @@ class MonteCarloPoseLoss(nn.Module):
         loss_pose = loss_tgt + loss_pred  # (num_obj, )
         loss_pose[torch.isnan(loss_pose)] = 0
         loss_pose = loss_pose.mean() / self.norm_factor
+        
+#        with torch.no_grad():
+#            loss_tgt_copy = loss_tgt.clone().cpu()
+#            loss_pred_copy = loss_pred.clone().cpu()
+#            loss_tgt_copy[torch.isnan(loss_tgt_copy)] = 0
+#            loss_pred_copy[torch.isnan(loss_pred_copy)] = 0
+#            loss_tgt_copy = loss_tgt_copy.mean() / self.norm_factor
+#            loss_pred_copy = loss_pred_copy.mean() / self.norm_factor
 
-        return loss_pose.mean()
+        return loss_pose.mean()#, loss_tgt_copy, loss_pred_copy

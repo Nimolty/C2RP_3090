@@ -746,49 +746,49 @@ class DreamHourglass(nn.Module):
         )
         self.heads_0.add_module("3", nn.ReLU(inplace=True))
         self.heads_0.add_module(
-            "4", nn.Conv2d(32, self.n_keypoints, kernel_size=3, stride=1, padding=1)#16*14*100*100
+            "4", nn.Conv2d(32, self.n_keypoints, kernel_size=3, stride=1, padding=1)#16*7*100*100
         )
 #        self.heads_0.add_module(
 #            "5", nn.Softmax(dim=-1)
 #        )
         
-        self.heads_1 = nn.Sequential()
-        self.heads_1.add_module(
-            "0", nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
-        )
-        self.heads_1.add_module("1", nn.ReLU(inplace=True))
-        self.heads_1.add_module(
-            "2", nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1)
-        )
-        self.heads_1.add_module("3", nn.ReLU(inplace=True))
-        self.heads_1.add_module(
-            "4", nn.Conv2d(32, self.n_keypoints, kernel_size=3, stride=1, padding=1)  # 16*7*100*100
-        )
-
-        self.heads_mlp = nn.Sequential()
-        self.heads_mlp.add_module(
-            '0', nn.Linear(10000, 2048)
-        )
-        self.heads_mlp.add_module('1',nn.LeakyReLU())
-        self.heads_mlp.add_module(
-            '2', nn.Linear(2048, 512)
-        )
-        self.heads_mlp.add_module('3', nn.LeakyReLU())
-        self.heads_mlp.add_module(
-            '4', nn.Linear(512, 256)
-        )
-        self.heads_mlp.add_module('5', nn.LeakyReLU())
-        self.heads_mlp.add_module(
-            '6', nn.Linear(256, 256)
-        )
-        self.heads_mlp.add_module('7', nn.LeakyReLU())
-        self.heads_mlp.add_module(
-            '8', nn.Linear(256, 16)
-        )
-        self.heads_mlp.add_module('9', nn.LeakyReLU())
-        self.heads_mlp.add_module(
-            '10', nn.Linear(16, 2)
-        )
+#        self.heads_1 = nn.Sequential()
+#        self.heads_1.add_module(
+#            "0", nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
+#        )
+#        self.heads_1.add_module("1", nn.ReLU(inplace=True))
+#        self.heads_1.add_module(
+#            "2", nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1)
+#        )
+#        self.heads_1.add_module("3", nn.ReLU(inplace=True))
+#        self.heads_1.add_module(
+#            "4", nn.Conv2d(32, self.n_keypoints, kernel_size=3, stride=1, padding=1)  # 16*7*100*100
+#        )
+#
+#        self.heads_mlp = nn.Sequential()
+#        self.heads_mlp.add_module(
+#            '0', nn.Linear(10000, 2048)
+#        )
+#        self.heads_mlp.add_module('1',nn.LeakyReLU())
+#        self.heads_mlp.add_module(
+#            '2', nn.Linear(2048, 512)
+#        )
+#        self.heads_mlp.add_module('3', nn.LeakyReLU())
+#        self.heads_mlp.add_module(
+#            '4', nn.Linear(512, 256)
+#        )
+#        self.heads_mlp.add_module('5', nn.LeakyReLU())
+#        self.heads_mlp.add_module(
+#            '6', nn.Linear(256, 256)
+#        )
+#        self.heads_mlp.add_module('7', nn.LeakyReLU())
+#        self.heads_mlp.add_module(
+#            '8', nn.Linear(256, 16)
+#        )
+#        self.heads_mlp.add_module('9', nn.LeakyReLU())
+#        self.heads_mlp.add_module(
+#            '10', nn.Linear(16, 2)
+#        )
 
         if 1:
             self.softmax = nn.Sequential()
@@ -864,14 +864,15 @@ class DreamHourglass(nn.Module):
 #            output_head = softmax(output_head)
 #            output_head_0 = output_head[:, :, 0, :, :] #16x7x100x100
                         
-            output_w2d_heatmap = self.heads_1(y_0_out)
-            w2d_heatmap_1d = output_w2d_heatmap.view(-1, 10000)
-            output_w2d = self.heads_mlp(w2d_heatmap_1d)
-            # print(y_0_5.shape, y_0_out.shape,output_head_0.shape)
-            # y_1_out = self.heads_1(decoder_input)
-            #
-            # output_head_1 = self.heads_mlp(y_1_out_1d)
-            # print(y_1_out_1d.shape,output_head_1.shape)
+#            output_w2d_heatmap = self.heads_1(y_0_out)
+#            w2d_heatmap_1d = output_w2d_heatmap.view(-1, 10000)
+#            output_w2d = self.heads_mlp(w2d_heatmap_1d)
+            bs, n_kp, H, W = output_head_0.shape
+            max_pool = nn.MaxPool1d(10000, stride=1)
+            output_w2d_1d = max_pool(output_head_0.view(bs, n_kp, -1))
+            output_w2d = output_w2d_1d.repeat(1, 1, 2)
+
+
         # Output heads
         outputs = []
         outputs.append(output_head_0)#belief map

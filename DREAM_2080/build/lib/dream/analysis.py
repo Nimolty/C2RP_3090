@@ -13,7 +13,7 @@ from ruamel.yaml import YAML
 import torch
 from torch.utils.data import DataLoader as TorchDataLoader
 from tqdm import tqdm
-
+from pyrr import Quaternion
 import dream
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -97,6 +97,7 @@ def analyze_ndds_dataset(
     output_dir,
     visualize_belief_maps=True,
     pnp_analysis=True,
+    dream_pnp_analysis=False, 
     force_overwrite=False,
     image_preprocessing_override=None,
     batch_size=16,
@@ -182,6 +183,13 @@ def analyze_ndds_dataset(
         augment_data=False,
         debug_mode=manip_dataset_debug_mode,
     )
+##    
+    n_train_data = 32 * 3
+    n_valid_data = len(found_manip_dataset) - n_train_data
+    train_dataset, valid_dataset = torch.utils.data.random_split(
+        found_manip_dataset, [n_train_data, n_valid_data]
+    )
+    found_manip_dataset = train_dataset
 
     data_loader = TorchDataLoader(
         found_manip_dataset,
@@ -193,9 +201,16 @@ def analyze_ndds_dataset(
     all_kp_projs_gt_raw = []
     all_kp_projs_detected_raw = []
     all_gt_kp_positions = []
+    pnp_attempts_successful = []
+    poses_xyzxyzw = []
+    all_n_inframe_projs_gt = []
+    pnp_add = []
+#    all_rgb = []
 
     sample_results = []
     sample_idx = 0
+    camera_K = dream.utilities.load_camera_intrinsics(
+                found_ndds_dataset_config["camera"])
 
     with torch.no_grad():
 
@@ -237,6 +252,9 @@ def analyze_ndds_dataset(
                 #print(this_detected_kps_raw.shape)
 
                 all_kp_projs_detected_raw.append(this_detected_kps_raw.tolist())
+                
+#                this_rgb_image = network_image_input[b].cpu().numpy()
+#                all_rgb.append(this_rgb_image.tolist())
 
                 gt_kps_raw = np.array(
                     sample["keypoint_projections_raw"][b], dtype=float
@@ -280,9 +298,81 @@ def analyze_ndds_dataset(
                 sample_results.append((sample_idx, this_sample_info, this_metric))
 
                 sample_idx += 1
-
+                
+                if pnp_analysis:
+                    #gt_kp_pos
+                    kp_pos_gt = gt_kp_pos.clone()
+#                    kp_pos_gt = kp_pos_gt - kp_pos_gt[0]
+#                    kp_pos_gt *= -100
+                    kp_pos_gt = kp_pos_gt.cpu().numpy()
+                    kp_projs_est = torch.from_numpy(this_detected_kps_raw).clone().numpy()
+                    kp_projs_gt = torch.from_numpy(gt_kps_raw).clone().numpy()
+                    kp_rgb_tensor = network_image_input[b].unsqueeze(0)
+                    
+                    n_inframe_projs_gt = 0
+                    for kp_proj_gt in kp_projs_gt:
+                        if (
+                            0.0 < kp_proj_gt[0]
+                            and kp_proj_gt[0] < image_raw_resolution[0]
+                            and 0.0 < kp_proj_gt[1]
+                            and kp_proj_gt[1] < image_raw_resolution[1]
+                        ):
+                            n_inframe_projs_gt += 1
+                    
+                    if dream_pnp_analysis:
+        #                print('####################################################')
+                        pnp_retval, translation, quaternion, inliers = dream.geometric_vision.solve_pnp_ransac(
+                            kp_pos_gt, kp_projs_est, camera_K
+                        ) #此时quaternion为xyzw
+#                        print('translation', translation)
+#                        print('quaternion', quaternion)
+                        if pnp_retval:
+                            quaternion = quaternion.tolist()
+        #                    print('quaternion_xyzw', quaternion)
+                            quaternion = [quaternion[3]] + quaternion[:3]
+        #                    print('quaternion_wxyz', quaternion) 
+                            pose_init = np.array(translation.tolist() + quaternion) # xyzwxyz
+                            pose_init = torch.from_numpy(pose_init).unsqueeze(0).cuda()
+                            kp_pos_gt_tensor = torch.from_numpy(kp_pos_gt).unsqueeze(0).cuda()
+#                            kp_rgb_tensor = torch.from_numpy(kp_rgb).unsqueeze(0).cuda()
+                            pose_opt = dream_network.dream_solve(kp_rgb_tensor.float(),kp_pos_gt_tensor, camera_K, pose_init)
+                            
+                            translation = pose_opt[0][:3].cpu().numpy()
+                            quaternion = pose_opt[0][3:].cpu().numpy() #wxyz
+#                            print('epro-trans', translation)
+#                            print('epro-quaternion', quaternion)
+                    else:
+                        pnp_retval, translation, quaternion, inliers = dream.geometric_vision.solve_pnp_ransac(
+                        kp_pos_gt, kp_projs_est, camera_K
+                            )
+                        print('#####')
+                            #print(pnp_retval)
+                            #pnp_retval, translation, quaternion, inliers = dream.geometric_vision.solve_pnp_ransac(kp_pos_gt_pnp, kp_projs_est_pnp, camera_K)
+            
+                    pnp_attempts_successful.append(pnp_retval)
+        
+                    all_n_inframe_projs_gt.append(n_inframe_projs_gt)
+        
+                    if pnp_retval:
+                        quaternion = quaternion.tolist()
+        #                print('最终quaternion_wxyz', quaternion)
+                        if dream_pnp_analysis:
+                            quaternion = quaternion[1:] + [quaternion[0]] #xyzw
+        #                print('最终quaternion_xyzw', quaternion)
+                        poses_xyzxyzw.append(translation.tolist() + quaternion)
+                        quaternion = Quaternion(quaternion)
+                        add = dream.geometric_vision.add_from_pose(
+                            translation, quaternion, kp_pos_gt, camera_K
+                        )
+                    else:
+                        poses_xyzxyzw.append([-999.99] * 7)
+                        add = -999.99
+        
+                    pnp_add.append(add)
+    
     all_kp_projs_detected_raw = np.array(all_kp_projs_detected_raw)
     all_kp_projs_gt_raw = np.array(all_kp_projs_gt_raw)
+#    all_rgb = np.array(all_rgb)
 
     # Write keypoint file
     n_samples = len(sample_results)
@@ -297,69 +387,107 @@ def analyze_ndds_dataset(
     write_keypoint_csv(
         keypoint_path, sample_names, all_kp_projs_detected_raw, all_kp_projs_gt_raw
     )
+    
+    pnp_path = os.path.join(output_dir, "pnp_results.csv")
+    write_pnp_csv(
+                pnp_path,
+                sample_names,
+                pnp_attempts_successful,
+                poses_xyzxyzw,
+                pnp_add,
+                all_n_inframe_projs_gt,
+            )
+    pnp_results = pnp_metrics(pnp_add, all_n_inframe_projs_gt)
 
     # PNP analysis
-    pnp_attempts_successful = []
-    poses_xyzxyzw = []
-    all_n_inframe_projs_gt = []
-    pnp_add = []
-
-    if pnp_analysis:
-        all_gt_kp_positions = np.array(all_gt_kp_positions)
-        camera_K = dream.utilities.load_camera_intrinsics(
-            found_ndds_dataset_config["camera"]
-        )
-        for kp_projs_est, kp_projs_gt, kp_pos_gt in zip(
-            all_kp_projs_detected_raw, all_kp_projs_gt_raw, all_gt_kp_positions
-        ):
-            kp_pos_gt = kp_pos_gt - kp_pos_gt[0]
-            kp_pos_gt = kp_pos_gt * (-100)
-            #print(kp_pos_gt)
-            n_inframe_projs_gt = 0
-            for kp_proj_gt in kp_projs_gt:
-                if (
-                    0.0 < kp_proj_gt[0]
-                    and kp_proj_gt[0] < image_raw_resolution[0]
-                    and 0.0 < kp_proj_gt[1]
-                    and kp_proj_gt[1] < image_raw_resolution[1]
-                ):
-                    n_inframe_projs_gt += 1
-
-            idx_good_detections = np.where(kp_projs_est > -999.0)
-            idx_good_detections_rows = np.unique(idx_good_detections[0])
-            kp_projs_est_pnp = kp_projs_est[idx_good_detections_rows, :]
-            kp_pos_gt_pnp = kp_pos_gt[idx_good_detections_rows, :]
-
-            pnp_retval, translation, quaternion = dream.geometric_vision.solve_pnp(
-                kp_pos_gt_pnp, kp_projs_est_pnp, camera_K
-            )
-            # pnp_retval, translation, quaternion, inliers = dream.geometric_vision.solve_pnp_ransac(kp_pos_gt_pnp, kp_projs_est_pnp, camera_K)
-
-            pnp_attempts_successful.append(pnp_retval)
-
-            all_n_inframe_projs_gt.append(n_inframe_projs_gt)
-
-            if pnp_retval:
-                poses_xyzxyzw.append(translation.tolist() + quaternion.tolist())
-                add = dream.geometric_vision.add_from_pose(
-                    translation, quaternion, kp_pos_gt_pnp, camera_K
-                )
-            else:
-                poses_xyzxyzw.append([-999.99] * 7)
-                add = -999.99
-
-            pnp_add.append(add)
-
-        pnp_path = os.path.join(output_dir, "pnp_results.csv")
-        write_pnp_csv(
-            pnp_path,
-            sample_names,
-            pnp_attempts_successful,
-            poses_xyzxyzw,
-            pnp_add,
-            all_n_inframe_projs_gt,
-        )
-        pnp_results = pnp_metrics(pnp_add, all_n_inframe_projs_gt)
+#    pnp_attempts_successful = []
+#    poses_xyzxyzw = []
+#    all_n_inframe_projs_gt = []
+#    pnp_add = []
+    
+#    with torch.no_grad():
+#        if pnp_analysis:
+#            all_gt_kp_positions = np.array(all_gt_kp_positions)
+#            camera_K = dream.utilities.load_camera_intrinsics(
+#                found_ndds_dataset_config["camera"]
+#            )
+#            for kp_projs_est, kp_projs_gt, kp_pos_gt, kp_rgb in zip(
+#                all_kp_projs_detected_raw, all_kp_projs_gt_raw, all_gt_kp_positions, all_rgb
+#            ):
+#                kp_pos_gt = kp_pos_gt - kp_pos_gt[0]
+#                kp_pos_gt = kp_pos_gt * (-100)
+#                #print(kp_pos_gt)
+#                n_inframe_projs_gt = 0
+#                for kp_proj_gt in kp_projs_gt:
+#                    if (
+#                        0.0 < kp_proj_gt[0]
+#                        and kp_proj_gt[0] < image_raw_resolution[0]
+#                        and 0.0 < kp_proj_gt[1]
+#                        and kp_proj_gt[1] < image_raw_resolution[1]
+#                    ):
+#                        n_inframe_projs_gt += 1
+#    
+#    #            idx_good_detections = np.where(kp_projs_est > -999.0)
+#    #            idx_good_detections_rows = np.unique(idx_good_detections[0])
+#    #            kp_projs_est_pnp = kp_projs_est[idx_good_detections_rows, :]
+#    #            kp_pos_gt_pnp = kp_pos_gt[idx_good_detections_rows, :]
+#                
+#                if dream_pnp_analysis:
+#    #                print('####################################################')
+#                    pnp_retval, translation, quaternion, inliers = dream.geometric_vision.solve_pnp_ransac(
+#                        kp_pos_gt, kp_projs_est, camera_K
+#                    ) #此时quaternion为xyzw
+#                    if pnp_retval:
+#                        quaternion = quaternion.tolist()
+#    #                    print('quaternion_xyzw', quaternion)
+#                        quaternion = [quaternion[3]] + quaternion[:3]
+#    #                    print('quaternion_wxyz', quaternion) 
+#                        pose_init = np.array(translation.tolist() + quaternion) # xyzwxyz
+#                        pose_init = torch.from_numpy(pose_init).unsqueeze(0).cuda()
+#                        kp_pos_gt_tensor = torch.from_numpy(kp_pos_gt).unsqueeze(0).cuda()
+#                        kp_rgb_tensor = torch.from_numpy(kp_rgb).unsqueeze(0).cuda()
+#                        pose_opt = dream_network.dream_solve(kp_rgb_tensor.float(),kp_pos_gt_tensor, camera_K, pose_init)
+#                        translation = pose_opt[0][:3].cpu().numpy()
+#                        quaternion = pose_opt[0][3:].cpu().numpy() #wxyz
+#                        
+#                            
+#    #            else:
+#    #                pnp_retval, translation, quaternion = dream.geometric_vision.solve_pnp(
+#    #                    kp_pos_gt_pnp, kp_projs_est_pnp, camera_K
+#    #                )
+#                    # print(pnp_retval)
+#                    # pnp_retval, translation, quaternion, inliers = dream.geometric_vision.solve_pnp_ransac(kp_pos_gt_pnp, kp_projs_est_pnp, camera_K)
+#        
+#                pnp_attempts_successful.append(pnp_retval)
+#    
+#                all_n_inframe_projs_gt.append(n_inframe_projs_gt)
+#    
+#                if pnp_retval:
+#                    quaternion = quaternion.tolist()
+#    #                print('最终quaternion_wxyz', quaternion)
+#                    quaternion = quaternion[1:] + [quaternion[0]] #xyzw
+#    #                print('最终quaternion_xyzw', quaternion)
+#                    poses_xyzxyzw.append(translation.tolist() + quaternion)
+#                    quaternion = Quaternion(quaternion)
+#                    add = dream.geometric_vision.add_from_pose(
+#                        translation, quaternion, kp_pos_gt, camera_K
+#                    )
+#                else:
+#                    poses_xyzxyzw.append([-999.99] * 7)
+#                    add = -999.99
+#    
+#                pnp_add.append(add)
+    
+#            pnp_path = os.path.join(output_dir, "pnp_results.csv")
+#            write_pnp_csv(
+#                pnp_path,
+#                sample_names,
+#                pnp_attempts_successful,
+#                poses_xyzxyzw,
+#                pnp_add,
+#                all_n_inframe_projs_gt,
+#            )
+#            pnp_results = pnp_metrics(pnp_add, all_n_inframe_projs_gt)
 
     print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
 
@@ -1009,7 +1137,7 @@ def pnp_metrics(
     pnp_add,
     num_inframe_projs_gt,
     num_min_inframe_projs_gt_for_pnp=4,
-    add_auc_threshold=0.1,
+    add_auc_threshold=0.1*100,
     pnp_magic_number=-999.0,
 ):
     pnp_add = np.array(pnp_add)

@@ -192,6 +192,8 @@ class ManipulatorNDDSDataset(TorchDataset):
         kp_projs_net_output_as_tensor = torch.from_numpy(
             np.array(kp_projs_net_output)
         ).float()
+        
+        kp_projs_as_tensor = torch.from_numpy(np.array(keypoints['projections'])).float()
 
 
         if keypoints['trans'] != [] and keypoints['rot_quat'] != []:
@@ -201,20 +203,46 @@ class ManipulatorNDDSDataset(TorchDataset):
             rot_gt_as_tensor = torch.from_numpy(
                 np.array(keypoints["rot_quat"])
             ).float()
+            
+            trans_gt_prev_as_tensor = torch.from_numpy(
+                np.array(keypoints["trans_prev"])
+            ).float()
+            rot_gt_prev_as_tensor = torch.from_numpy(
+                np.array(keypoints["rot_quat_prev"])
+            ).float()
+#            keypoint_epro_positions_as_tensor = torch.from_numpy(
+#            np.array(keypoints["epro-positions"])
+#            ).float()
+#            keypoint_epro_positions_as_tensor = keypoint_epro_positions_as_tensor.squeeze()
+#            keypoint_dream_positions_as_tensor = torch.from_numpy(
+#            np.array(keypoints["dream-positions"])
+#            ).float()
+#            keypoint_dream_positions_as_tensor = keypoint_dream_positions_as_tensor.squeeze()
             keypoint_positions_as_tensor = torch.from_numpy(
-            np.array(keypoints["positions"])
+                np.array(keypoints['positions'])
             ).float()
             keypoint_positions_as_tensor = keypoint_positions_as_tensor.squeeze()
+            keypoint_positions_prev_as_tensor = torch.from_numpy(
+                np.array(keypoints["positions_prev"])
+            ).float()
+            keypoint_positions_prev_as_tensor = keypoint_positions_prev_as_tensor.squeeze()
              
         # Construct output sample
             sample = {
                 "image_rgb_input": image_rgb_net_input_as_tensor,
+#                "image_rgb_raw" : image_rgb_raw,
                 ######################
                 "keypoint_projections_output": kp_projs_net_output_as_tensor,
+                "keypoint_projections" : kp_projs_as_tensor,
                 "keypoint_positions": keypoint_positions_wrt_cam_as_tensor,
-                "trans_keypoint_positions": keypoint_positions_as_tensor,
+                "positions": keypoint_positions_as_tensor,
+#                "dream_keypoint_positions":keypoint_dream_positions_as_tensor,
                 "trans_gt": trans_gt_as_tensor,
                 "rot_gt": rot_gt_as_tensor,
+                ######################
+                "trans_prev": trans_gt_prev_as_tensor,
+                "rot_prev":rot_gt_prev_as_tensor,
+                "positions_prev" :keypoint_positions_prev_as_tensor,
                 ######################
                 "config": datum,
             }
@@ -241,7 +269,7 @@ class ManipulatorNDDSDataset(TorchDataset):
                 np.array(keypoints["projections"])
             ).float()
             sample["keypoint_projections_raw"] = kp_projections_as_tensor
-            kp_projections_input_as_tensor = torch.from_numpy(kp_projs_net_input).float()
+            kp_projections_input_as_tensor = torch.from_numpy(np.array(kp_projs_net_input)).float()
 
             sample["keypoint_projections_input"] = kp_projections_input_as_tensor
             image_raw_resolution_as_tensor = torch.tensor(image_raw_resolution).float()

@@ -10,6 +10,7 @@ from PIL import Image as PILImage
 import numpy as np
 from ruamel.yaml import YAML
 import torch
+import torch.nn as nn
 import torchvision.transforms as TVTransforms
 from torch.utils.tensorboard import SummaryWriter
 from epropnp_all import *
@@ -286,6 +287,7 @@ class DreamNetwork:
                         self.n_keypoints, **vgg_kwargs
                     ),
                     device_ids=data_parallel_device_ids,
+#                    broadcast_buffers=False,
                 ).cuda()
             loss_type = self.network_config["architecture"]["loss"]["type"]
 
@@ -386,32 +388,57 @@ class DreamNetwork:
         x2d = network_output_heads[1].double().to(device)
         x2d[:,:,0] = x2d[:,:,0]/100*640
         x2d[:,:,1] = x2d[:,:,1]/100*480
-        x3d = network_input_heads[1].double().to(device) 
-#
+        x3d = network_input_heads[1].double().to(device)
+#        x2d_true = network_input_heads[2].double().to(device) 
+#      
         #预测w2d，需要调network.py
         w2d = network_output_heads[2].double().to(device)
         w2d = w2d.view(bs, num_pt, 2)
         self.log_weight_scale = self.model.module.log_weight_scale
         self.log_weight_scale = self.log_weight_scale.to(device)
         #print(self.log_weight_scale)
-        w2d = (w2d.log_softmax(dim=-2) + self.log_weight_scale).exp()
+        self.normed_w2d = (w2d.log_softmax(dim=-2).exp())
+        self.scaled_w2d = (w2d.log_softmax(dim=-2) + self.log_weight_scale).exp()
 #        #不预测w2d，直接uniform
 #        w2d = torch.full([bs, num_pt, 2], 1 / num_pt).to(device) * self.log_weight_scale.to(device).exp()
 #
 #        train_flag 是为了方便传其他参数用的
         if train_flag and this_epoch > 0:
             self.camera.set_param(cam_mats)
-            self.cost_fun.set_param(x2d.detach(), w2d)
+            self.cost_fun.set_param(x2d.detach(), self.scaled_w2d)
             pose_opt, cost, pose_opt_plus, pose_samples, pose_sample_logweights, cost_tgt = self.epropnp.monte_carlo_forward(
                 x3d,
                 x2d,
-                w2d,
+                self.scaled_w2d,
                 self.camera,
                 self.cost_fun,
-                pose_init=gt_pose,
+                pose_init=gt_pose, #xyzwxyz
                 force_init_solve=True,
                 with_pose_opt_plus=True)  # True for derivative regularization loss
             norm_factor = self.log_weight_scale.detach().exp().mean()
+            
+#            tt_pose = torch.zeros_like(gt_pose)
+#            dr_pose = torch.zeros_like(gt_pose)
+#            distCoeffs = np.asarray([0, 0, 0, 0, 0], dtype=np.float64)
+#            for p in range(len(pose_opt_plus)):
+#                ###按照道理这里应该是xyzw
+#                pnp_retval, translation, quaternion, inliers = solve_pnp_ransac(canonical_points = np.asarray(x3d[p].detach().cpu()), projections = np.asarray(x2d_true[p].detach().cpu()), camera_K = cam_mat, dist_coeffs=distCoeffs)
+#                dream_pose = torch.cat((torch.tensor(translation), torch.tensor(quaternion))).reshape(1, 7).to(device)
+#                dr_pose[p] = dream_pose
+#                
+#                ###按照道理这里应该是wxyz
+#                _, rrval, ttval = cv2.solvePnP(np.asarray(x3d[p].detach().cpu()), np.asarray(x2d_true[p].detach().cpu()), cam_mat, distCoeffs)
+#                rmat_val, _ = cv2.Rodrigues(rrval)
+#                rqval = matrix_to_quaternion(torch.tensor(rmat_val)).unsqueeze(1)
+#                t_pose = torch.cat((torch.tensor(ttval), torch.tensor(rqval))).reshape(1, 7).to(device)
+#                tt_pose[p] = t_pose
+#                
+#                print('dr:', dream_pose)
+#                print('cv: ', t_pose)
+#                print('gt:', gt_pose[p])
+                
+            
+            
             
             loss_mc = self.monte_carlo_pose_loss(
                 pose_sample_logweights, cost_tgt,norm_factor)
@@ -422,15 +449,16 @@ class DreamNetwork:
             loss_t = loss_t.mean()
             dot_quat = (pose_opt_plus[:, None, 3:] @ gt_pose[:, 3:, None]).squeeze(-1).squeeze(-1)
             loss_r = (1 - dot_quat.square()) * 2
-            loss_r = loss_r.mean()
-
+            loss_r = loss_r.mean()            
+            relu = nn.ReLU()
+            loss_w = (relu(self.normed_w2d - 0.5)).mean()
             loss_2 =  0.02 * loss_mc + 0.1 * loss_t + 0.1 * loss_r
             
         self.num += 1
         if this_epoch <= 3:
-            loss = loss_1
+            loss = loss_1 
         else:
-            loss = loss_1 +  0.0001 * loss_2
+            loss = loss_1 +  0.0001 * loss_2 
 #        loss = loss_1
 #        loss = loss_2
             
@@ -450,14 +478,58 @@ class DreamNetwork:
 
     # image_raw_resolution: (width, height) in pixels
     # calls resolution_after_preprocessing under the hood, using network trained resolution as the reference resolution
+    def dream_solve(self, network_input_rgb,network_input_3d, cam_mat, pose_init):
+        #network_input_rgb为输入的图像
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        bs,num_pt,_ = network_input_3d.shape
+        cam_mats = torch.tensor(cam_mat).expand(1, -1, -1).to(device)
+        network_output_heads = self.model(network_input_rgb)
+        x2d = network_output_heads[1].double().to(device)
+        x2d[:,:,0] = x2d[:,:,0]/100*640
+        x2d[:,:,1] = x2d[:,:,1]/100*480
+        x3d = network_input_3d.double().to(device) 
+        # w2d
+        w2d = network_output_heads[2].double().to(device)
+        w2d = w2d.view(bs, num_pt, 2)
+        self.log_weight_scale = self.model.module.log_weight_scale
+        self.log_weight_scale = self.log_weight_scale.to(device)
+        #print(self.log_weight_scale)
+        w2d_scale = (w2d.log_softmax(dim=-2) + self.log_weight_scale).exp()
+        
+#        w2d_scale = torch.full([bs, num_pt, 2], 1 / num_pt).to(device) * self.model.module.log_weight_scale.to(device).exp()
+        
+        
+        self.camera.set_param(cam_mats)
+        self.cost_fun.set_param(x2d.detach(), w2d_scale)
+        pose_opt, cost, pose_opt_plus, pose_samples, pose_sample_logweights, cost_tgt = self.epropnp.monte_carlo_forward(
+            x3d,
+            x2d,
+            w2d_scale,
+            self.camera,
+            self.cost_fun,
+            pose_init=pose_init,
+            force_init_solve=True,
+            with_pose_opt_plus=True)  # True for derivative regularization loss
+#        print(pose_opt.shape)
+        return pose_opt
+        
+
+    
+    
     def add_heatmap(self, network_input_heads, target, writer, batch_idx, e, train_data_loader_length):
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         network_output_heads = self.model(network_input_heads[0])
         sample_belief_maps = network_output_heads[0]
+        detected_keypoints_netout_batch = network_output_heads[1].cpu().numpy()
+        gt_keypoints_netout = network_input_heads[3].cpu().numpy()
+        images_net_input_tensor_batch = network_input_heads[2]
+        images_net_input = dream.image_proc.images_from_tensor(
+        images_net_input_tensor_batch
+        )
         gt_belief_maps = target
         bs,num_pt,_, _ = sample_belief_maps.shape
-        for idx, sample in enumerate(zip(sample_belief_maps, gt_belief_maps)):
-            belief_map, gt_belief_map = sample
+        for idx, sample in enumerate(zip(sample_belief_maps, gt_belief_maps, detected_keypoints_netout_batch, gt_keypoints_netout, images_net_input)):
+            belief_map, gt_belief_map, keypoint_projs_detected, keypoint_projs_gt, image_rgb_net_input = sample
             belief_map_images = dream.image_proc.images_from_belief_maps(
             belief_map, normalization_method=6
             )
@@ -470,11 +542,86 @@ class DreamNetwork:
             gt_belief_maps_mosaic = dream.image_proc.mosaic_images(
             gt_belief_map_images, rows=2, cols=4, inner_padding_px=10
             )
+            
+            belief_map_images_kpimg = []
+            for n_kp in range(num_pt):
+                belief_map_image_kpimg = dream.image_proc.overlay_detected_points_on_image(
+                    belief_map_images[n_kp],
+                    [keypoint_projs_detected[n_kp, :]],
+                    annotation_color_dot = 'yellow',
+                    point_diameter=4
+                )
+                belief_map_images_kpimg.append(belief_map_image_kpimg)
+            belief_maps_kpimg_mosaic = dream.image_proc.mosaic_images(
+                belief_map_images_kpimg, rows=2, cols=4, inner_padding_px=10
+            )
+ #           belief_maps_kpimg_mosaic.save(belief_maps_kpimg_mosaic_path)
 #            trans_totensor = TVTransforms.ToTensor()
 #            belief_map_img = trans_totensor(belief_maps_mosaic).to(device)
 #            gt_belief_map_img = trans_totensor(gt_belief_maps_mosaic).to(device)
+            kp_projs_detected_net_input = []
+            kp_projs_gt_net_input = []
+            blend_input_belief_map_kp_images = []
+            net_input_res_inf = image_rgb_net_input.size
+            net_output_res_inf = (
+            sample_belief_maps[0].shape[2],
+            sample_belief_maps[0].shape[1],
+            )
+            scale_factor_netin_from_netout = (
+            float(net_input_res_inf[0]) / float(net_output_res_inf[0]),
+            float(net_input_res_inf[1]) / float(net_output_res_inf[1]),
+            )
+            for n_kp in range(7):
+                kp_projs_detected_net_input.append(
+                    [
+                        keypoint_projs_detected[n_kp][0]
+                        * scale_factor_netin_from_netout[0],
+                        keypoint_projs_detected[n_kp][1]
+                        * scale_factor_netin_from_netout[1],
+                    ]
+                )
+                kp_projs_gt_net_input.append(
+                    [
+                        keypoint_projs_gt[n_kp][0] * scale_factor_netin_from_netout[0],
+                        keypoint_projs_gt[n_kp][1] * scale_factor_netin_from_netout[1],
+                    ]
+                )
+
+            for n in range(len(belief_map_images)):
+            # Upscale belief map to net input resolution
+                belief_map_image_upscaled = belief_map_images[n].resize(
+                    net_input_res_inf, resample=PILImage.BILINEAR
+                )
+
+                # Increase image brightness to account for the belief map overlay
+                # TBD - maybe use a mask instead
+                blend_input_belief_map_image = PILImage.blend(
+                    belief_map_image_upscaled, image_rgb_net_input, alpha=0.5
+                )
+#                blend_input_belief_map_images.append(blend_input_belief_map_image)
+    
+                # Overlay on the blended one directly so the annotation isn't blurred
+                blend_input_belief_map_kp_image = dream.image_proc.overlay_points_on_image(
+                    blend_input_belief_map_image,
+                    [kp_projs_gt_net_input[n], kp_projs_detected_net_input[n]],
+                    [self.keypoint_names[n]] * 2,
+                    annotation_color_dot=["green", "red"],
+                    annotation_color_text=["green", "red"],
+                    point_diameter=4, 
+                )
+                blend_input_belief_map_kp_images.append(blend_input_belief_map_kp_image)
+
+     
+            mosaic_blend_input_belief_map_kp_images = dream.image_proc.mosaic_images(
+                blend_input_belief_map_kp_images, rows=2, cols=4, inner_padding_px=10
+            )
+            
             writer.add_image(f'{idx} belief_map', np.array(belief_maps_mosaic), batch_idx + e * train_data_loader_length, dataformats='HWC')
+            writer.add_image(f'{idx} belief_map with kp', np.array(belief_maps_kpimg_mosaic), batch_idx + e * train_data_loader_length, dataformats='HWC')
+            writer.add_image(f'{idx} blend image ', np.array(mosaic_blend_input_belief_map_kp_images), batch_idx + e * train_data_loader_length, dataformats='HWC')
             writer.add_image(f'{idx} gt_belief_map', np.array(gt_belief_maps_mosaic), batch_idx + e * train_data_loader_length, dataformats='HWC')
+
+
         
         
     

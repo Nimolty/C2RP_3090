@@ -6,7 +6,7 @@ import argparse
 from collections import OrderedDict as odict
 import pickle
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 import random
 import socket
 import time
@@ -100,19 +100,19 @@ def train_network(args):
             ), "Network is already trained for the number of requested epochs."
     
             # Find the best network to determine its validation loss
-        best_valid_network_config_path = os.path.join(
-                args.output_dir, "best_network.yaml"
-            )
-        assert os.path.exists(
-                best_valid_network_config_path
-            ), "Could not determine the best validation loss."
+#        best_valid_network_config_path = os.path.join(
+#                args.output_dir, "best_network.yaml"
+#            )
+#        assert os.path.exists(
+#                best_valid_network_config_path
+#            ), "Could not determine the best validation loss."
     
-        valid_parser = YAML(typ="safe")
-        with open(best_valid_network_config_path, "r") as f:
-            best_valid_network_config = valid_parser.load(f)
-        best_valid_loss = best_valid_network_config["training"]["results"][
-                "validation_loss"
-            ]["mean"]
+#        valid_parser = YAML(typ="safe")
+#        with open(best_valid_network_config_path, "r") as f:
+#            best_valid_network_config = valid_parser.load(f)
+#        best_valid_loss = best_valid_network_config["training"]["results"][
+#                "validation_loss"
+#            ]["mean"]
     
         # Load in the old training log
         if os.path.exists(os.path.join(args.output_dir, "training_log.pkl")):
@@ -172,6 +172,8 @@ def train_network(args):
             "batch_training_loss_mc" : [],
             "batch_training_loss_t" : [],
             "batch_training_loss_r" : [],
+#            "batch_training_loss_tgt" : [],
+#            "batch_training_loss_pred":[],
             "start_time": training_start_time,
             "timestamps": [],
             "random_seed": random_seed,
@@ -450,8 +452,8 @@ def train_network(args):
         "net_output_resolution"
     ] = trained_net_output_res
 
-    # Create NDDS dataset and loader
-    training_debug_mode = dream.datasets.ManipulatorNDDSDatasetDebugLevels["NONE"]
+    # Create NDDS dataset and loader 
+    training_debug_mode = dream.datasets.ManipulatorNDDSDatasetDebugLevels["LIGHT"]
     network_requires_belief_maps = (
             dream_network.network_config["architecture"]["target"] == "belief_maps"
     )
@@ -501,6 +503,8 @@ def train_network(args):
     exists_or_mkdir(tb_path)
     writer = SummaryWriter(tb_path)
     infer_output_dir = f'/mnt/data/Dream_ty/Dream_model/Dream_infer/{args.name}'
+    write_output_dir = '/mnt/data/Dream_ty/Dream_model/log.txt'
+    exists_or_mkdir(write_output_dir)
     exists_or_mkdir(infer_output_dir)
 #    with open(label_path, 'a') as f:
 #        f.write(str(network_config))
@@ -513,6 +517,8 @@ def train_network(args):
         prev_loss_mc = np.concatenate(train_log["batch_training_loss_mc"], axis=0)
         prev_loss_t = np.concatenate(train_log["batch_training_loss_t"], axis=0)
         prev_loss_r = np.concatenate(train_log["batch_training_loss_r"], axis=0)
+#        prev_loss_tgt = np.concatenate(train_log["batch_training_loss_tgt"], axis=0)
+#        prev_loss_pred = np.concatenate(train_log["batch_training_loss_pred"], axis=0)
         length = prev_loss_1.shape[0]
         for i in range(length):
             writer.add_scalar(f' train_loss', prev_loss[i], i)
@@ -521,6 +527,8 @@ def train_network(args):
             writer.add_scalar(f' loss_mc', prev_loss_mc[i], i)
             writer.add_scalar(f' loss_t', prev_loss_t[i], i)
             writer.add_scalar(f' loss_r', prev_loss_r[i], i)
+#            writer.add_scalar(f' loss_tgt', prev_loss_tgt[i], i)
+#            writer.add_scalar(f' loss_pred', prev_loss_pred[i], i)
     
     
     for e in tqdm(range(start_epoch, args.epochs)):
@@ -540,6 +548,8 @@ def train_network(args):
         training_batch_loss_mc = []
         training_batch_loss_t = []
         training_batch_loss_r = []
+#        training_batch_loss_tgt = []
+#        training_batch_loss_pred = []
         training_batch_sample_names = []
         
 
@@ -561,7 +571,21 @@ def train_network(args):
             # New unified training
             network_input_heads = []
             network_input_heads.append(sample["image_rgb_input"].cuda())
-            network_input_heads.append(sample["trans_keypoint_positions"].cuda())
+#            network_input_heads.append(sample["positions_prev"].cuda())
+            network_input_heads.append(sample['positions'].cuda())
+            network_input_heads.append(sample["image_rgb_input_viz"].cuda())
+            network_input_heads.append(sample["keypoint_projections_output"].cuda())
+#            print(sample['positions'].cuda())
+#            network_input_heads.append(sample['keypoint_projections'].cuda())
+#            print('epro' , sample["epro_keypoint_positions"][:10])
+#            print('dream', sample['dream_keypoint_positions'][:10])
+#            with open('/mnt/data/Dream_ty/Dream_model/log.txt', 'w') as f:
+#                f.write('epro' + str(sample["epro_keypoint_positions"][:1]) + '\n')
+#                f.write('dream' + str(sample['dream_keypoint_positions'][:1]) + '\n')
+ #           out1 = sample['epro_keypoint_positions'][:10].cpu().numpy()
+#            out2 = sample['dream_keypoint_positions'][:10].cpu().numpy()
+#            out1.savetxt(write_output_dir)
+#            out2.savetxt(write_output_dir)
 
             if dream_network.network_config["architecture"]["target"] == "belief_maps":
                 training_labels = sample["belief_maps"].cuda()
@@ -581,6 +605,7 @@ def train_network(args):
             ###看dream/utilities.py的load_keypoints和dream/datasets.py的ManipulatorNDDSDataset
             tval = sample["trans_gt"].squeeze().double().to(device)
             rmat = sample["rot_gt"].squeeze().double().to(device)
+            # pose_gt : xyzwxyz
             pose_gt = torch.cat((tval, rmat), dim=-1).double()
             loss, loss_1, loss_2, loss_mc, loss_t, loss_r = dream_network.train(network_input_heads, pose_gt,camera_mat,training_labels,this_epoch, train_flag=True)
             ###################################
@@ -594,6 +619,8 @@ def train_network(args):
             writer.add_scalar(f' loss_mc', loss_mc, batch_idx + e * train_data_loader_length)
             writer.add_scalar(f' loss_t', loss_t, batch_idx + e * train_data_loader_length)
             writer.add_scalar(f' loss_r', loss_r, batch_idx + e * train_data_loader_length)
+#            writer.add_scalar(f' loss_tgt', loss_tgt, batch_idx + e * train_data_loader_length)
+#            writer.add_scalar(f' loss_pred', loss_pred, batch_idx + e * train_data_loader_length)
 #            
 #            for name, param in dream_network.named_parameters():
 #                print(name, param)
@@ -606,6 +633,11 @@ def train_network(args):
                 print('loss_mc', loss_mc)
                 print('loss_t', loss_t)
                 print('loss_r', loss_r)
+                print('normed_w2d', dream_network.normed_w2d)
+                print('scaled_w2d', dream_network.scaled_w2d)
+                
+#                print('loss_tgt', loss_tgt)
+#                print('loss_pred', loss_pred)
             
             if batch_idx % 50 == 0:
                 with torch.no_grad():
@@ -617,12 +649,16 @@ def train_network(args):
             training_loss_mc_this_batch = loss_mc
             training_loss_t_this_batch = loss_t
             training_loss_r_this_batch = loss_r
+#            training_loss_tgt_this_batch = loss_tgt
+#            training_loss_pred_this_batch = loss_pred
             training_batch_losses.append(training_loss_this_batch)
             training_batch_loss_1.append(training_loss_1_this_batch)
             training_batch_loss_2.append(training_loss_2_this_batch)
             training_batch_loss_mc.append(training_loss_mc_this_batch)
             training_batch_loss_t.append(training_loss_t_this_batch)
             training_batch_loss_r.append(training_loss_r_this_batch)
+#            training_batch_loss_tgt.append(training_loss_tgt_this_batch)
+#            training_batch_loss_pred.append(training_loss_pred_this_batch)
             
             
             if args.verbose:
@@ -637,137 +673,139 @@ def train_network(args):
         mean_training_loss_per_batch = np.mean(training_batch_losses)
         std_training_loss_per_batch = np.std(training_batch_losses)
 
-        # Evaluation Phase ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        if args.verbose:
-            print("")
-            print("~~ Validation Phase ~~")
+#        # Evaluation Phase ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#        if args.verbose:
+#            print("")
+#            print("~~ Validation Phase ~~")
 
-        dream_network.enable_evaluation()
+#        dream_network.enable_evaluation()
 
-        with torch.no_grad():
-
-            valid_batch_losses = []
-            valid_batch_sample_names = []
-
-            for valid_batch_idx, valid_sample in enumerate(tqdm(valid_data_loader)):
-
-                this_valid_batch_sample_names = valid_sample["config"]["name"]
-                this_valid_batch_size = valid_sample["image_rgb_input"].shape[0]
-
-                if args.verbose:
-                    print(
-                        "Processing batch index {} for validation...".format(
-                            valid_batch_idx
-                        )
-                    )
-                    print(
-                        "Sample names in this validation batch: {}".format(
-                            this_valid_batch_sample_names
-                        )
-                    )
-                    print(
-                        "This validation batch size: {}".format(this_valid_batch_size)
-                    )
-
-                # New unified validation
-                valid_network_input_heads = []
-                valid_network_input_heads.append(valid_sample["image_rgb_input"].cuda())
-                valid_network_input_heads.append(valid_sample["trans_keypoint_positions"].cuda())
-
-                if (
-                        dream_network.network_config["architecture"]["target"]
-                        == "belief_maps"
-                ):
-                    valid_labels = valid_sample["belief_maps"].cuda()
-                elif (
-                        dream_network.network_config["architecture"]["target"]
-                        == "keypoints"
-                ):
-                    valid_labels = valid_sample["keypoint_projections_output"].cuda()
-                else:
-                    assert (
-                        False
-                    ), "Could not determine how to provide validation labels to network."
-
-                valid_tval = valid_sample["trans_gt"].squeeze().double().to(device)
-                valid_rmat = valid_sample["rot_gt"].squeeze().double().to(device)
-                valid_pose_gt = torch.cat((valid_tval, valid_rmat), dim=-1).double()
-
-                valid_loss = dream_network.loss(valid_network_input_heads, valid_pose_gt, camera_mat, valid_labels, this_epoch , train_flag=True)
-
-                valid_loss_this_batch = valid_loss[0].item()
-                valid_batch_losses.append(valid_loss_this_batch)
-                if args.verbose:
-                    print(
-                        "Validation loss for this batch: {}".format(
-                            valid_loss_this_batch
-                        )
-                    )
-                    print("")
-                valid_batch_sample_names.append(this_valid_batch_sample_names)
-
-            mean_valid_loss_per_batch = np.mean(valid_batch_losses)
-            std_valid_loss_per_batch = np.std(valid_batch_losses)
-
-        # Bookkeeping and print info
-        dream_network.network_config["training"]["results"]["epochs_trained"] += 1
-        dream_network.network_config["training"]["results"]["training_loss"] = odict(
-            [
-                ("mean", float(mean_training_loss_per_batch)),
-                ("stdev", float(std_training_loss_per_batch)),
-            ]
-        )
-        dream_network.network_config["training"]["results"]["validation_loss"] = odict(
-            [
-                ("mean", float(mean_valid_loss_per_batch)),
-                ("stdev", float(std_valid_loss_per_batch)),
-            ]
-        )
-        print(
-            "Training Loss (batch-wise mean +- 1 stdev): {} +- {}".format(
-                mean_training_loss_per_batch, std_training_loss_per_batch
-            )
-        )
-        print(
-            "Validation Loss (batch-wise mean +- 1 stdev): {} +- {}".format(
-                mean_valid_loss_per_batch, std_valid_loss_per_batch
-            )
-        )
-
-        # Save network if it's better than anything trained so far
-        if mean_valid_loss_per_batch < best_valid_loss:
-
-            print("Best network result so far.")
-            best_valid_loss = mean_valid_loss_per_batch
-
-            if save_results:
-                dream_network.save_network(
-                    args.output_dir, "best_network", overwrite=True
-                )
-
-        this_epoch_timestamp = time.time() - training_start_time
-        print(
-            "This epoch took {} seconds.".format(
-                this_epoch_timestamp - last_epoch_timestamp
-            )
-        )
-        last_epoch_timestamp = this_epoch_timestamp
-        print("")
+#        with torch.no_grad():
+#
+#            valid_batch_losses = []
+#            valid_batch_sample_names = []
+#
+#            for valid_batch_idx, valid_sample in enumerate(tqdm(valid_data_loader)):
+#
+#                this_valid_batch_sample_names = valid_sample["config"]["name"]
+#                this_valid_batch_size = valid_sample["image_rgb_input"].shape[0]
+#
+#                if args.verbose:
+#                    print(
+#                        "Processing batch index {} for validation...".format(
+#                            valid_batch_idx
+#                        )
+#                    )
+#                    print(
+#                        "Sample names in this validation batch: {}".format(
+#                            this_valid_batch_sample_names
+#                        )
+#                    )
+#                    print(
+#                        "This validation batch size: {}".format(this_valid_batch_size)
+#                    )
+#
+#                # New unified validation
+#                valid_network_input_heads = []
+#                valid_network_input_heads.append(valid_sample["image_rgb_input"].cuda())
+#                valid_network_input_heads.append(valid_sample["positions"].cuda())
+#
+#                if (
+#                        dream_network.network_config["architecture"]["target"]
+#                        == "belief_maps"
+#                ):
+#                    valid_labels = valid_sample["belief_maps"].cuda()
+#                elif (
+#                        dream_network.network_config["architecture"]["target"]
+#                        == "keypoints"
+#                ):
+#                    valid_labels = valid_sample["keypoint_projections_output"].cuda()
+#                else:
+#                    assert (
+#                        False
+#                    ), "Could not determine how to provide validation labels to network."
+#
+#                valid_tval = valid_sample["trans_gt"].squeeze().double().to(device)
+#                valid_rmat = valid_sample["rot_gt"].squeeze().double().to(device)
+#                valid_pose_gt = torch.cat((valid_tval, valid_rmat), dim=-1).double()
+#
+#                valid_loss = dream_network.loss(valid_network_input_heads, valid_pose_gt, camera_mat, valid_labels, this_epoch , train_flag=True)
+#
+#                valid_loss_this_batch = valid_loss[0].item()
+#                valid_batch_losses.append(valid_loss_this_batch)
+#                if args.verbose:
+#                    print(
+#                        "Validation loss for this batch: {}".format(
+#                            valid_loss_this_batch
+#                        )
+#                    )
+#                    print("")
+#                valid_batch_sample_names.append(this_valid_batch_sample_names)
+#
+#            mean_valid_loss_per_batch = np.mean(valid_batch_losses)
+#            std_valid_loss_per_batch = np.std(valid_batch_losses)
+#
+#        # Bookkeeping and print info
+#        dream_network.network_config["training"]["results"]["epochs_trained"] += 1
+#        dream_network.network_config["training"]["results"]["training_loss"] = odict(
+#            [
+#                ("mean", float(mean_training_loss_per_batch)),
+#                ("stdev", float(std_training_loss_per_batch)),
+#            ]
+#        )
+#        dream_network.network_config["training"]["results"]["validation_loss"] = odict(
+#            [
+#                ("mean", float(mean_valid_loss_per_batch)),
+#                ("stdev", float(std_valid_loss_per_batch)),
+#            ]
+#        )
+#        print(
+#            "Training Loss (batch-wise mean +- 1 stdev): {} +- {}".format(
+#                mean_training_loss_per_batch, std_training_loss_per_batch
+#            )
+#        )
+#        print(
+#            "Validation Loss (batch-wise mean +- 1 stdev): {} +- {}".format(
+#                mean_valid_loss_per_batch, std_valid_loss_per_batch
+#            )
+#        )
+#
+#        # Save network if it's better than anything trained so far
+#        if mean_valid_loss_per_batch < best_valid_loss:
+#
+#            print("Best network result so far.")
+#            best_valid_loss = mean_valid_loss_per_batch
+#
+#            if save_results:
+#                dream_network.save_network(
+#                    args.output_dir, "best_network", overwrite=True
+#                )
+#
+#        this_epoch_timestamp = time.time() - training_start_time
+#        print(
+#            "This epoch took {} seconds.".format(
+#                this_epoch_timestamp - last_epoch_timestamp
+#            )
+#        )
+#        last_epoch_timestamp = this_epoch_timestamp
+#        print("")
 
         # Append to history
         train_log["epochs"].append(this_epoch)
         train_log["losses"].append(mean_training_loss_per_batch)
-        train_log["validation_losses"].append(mean_valid_loss_per_batch)
+#        train_log["validation_losses"].append(mean_valid_loss_per_batch)
         train_log["batch_training_losses"].append(training_batch_losses)
-        train_log["batch_validation_losses"].append(valid_batch_losses)
+#        train_log["batch_validation_losses"].append(valid_batch_losses)
         train_log["batch_training_sample_names"].append(training_batch_sample_names)
-        train_log["batch_validation_sample_names"].append(valid_batch_sample_names)
+#        train_log["batch_validation_sample_names"].append(valid_batch_sample_names)
         train_log["batch_training_loss_1"].append(training_batch_loss_1)
         train_log["batch_training_loss_2"].append(training_batch_loss_2)
         train_log["batch_training_loss_mc"].append(training_batch_loss_mc)
         train_log["batch_training_loss_r"].append(training_batch_loss_r)
         train_log["batch_training_loss_t"].append(training_batch_loss_t)
-        train_log["timestamps"].append(this_epoch_timestamp)
+#        train_log["batch_training_loss_tgt"].append(training_batch_loss_tgt)
+#        train_log["batch_training_loss_pred"].append(training_batch_loss_pred)
+#        train_log["timestamps"].append(this_epoch_timestamp)
 
         if save_results:
             # Write training log so far
@@ -804,6 +842,7 @@ def train_network(args):
                     epoch_infer_output_path,
                     visualize_belief_maps=visualize_belief_maps,
                     pnp_analysis=True,
+                    dream_pnp_analysis=True,
                     force_overwrite=args.force_overwrite,
                     image_preprocessing_override=args.image_preproc_override,
                     batch_size=args.infer_batch_size,

@@ -48,6 +48,7 @@ def network_inference_dataset(args):
         args.output_dir,
         visualize_belief_maps=visualize_belief_maps,
         pnp_analysis=True,
+        dream_pnp_analysis=True,
         force_overwrite=args.force_overwrite,
         image_preprocessing_override=args.image_preproc_override,
         batch_size=args.batch_size,
