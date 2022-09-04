@@ -1,0 +1,24 @@
+Analysis results for dataset: Seq
+Number of frames in this dataset: 100
+Using network config defined from: None
+
+Percentage out-of-frame gt keypoints not found (correct): 0.000% (0/1)
+Percentage out-of-frame gt keypoints found (incorrect): 100.000% (1/1)
+Percentage in-frame gt keypoints not found (incorrect): 0.286% (2/699)
+Percentage in-frame gt keypoints found (correct): 99.714% (697/699)
+L2 error (px) for in-frame keypoints (n = 697):
+   AUC: 0.64794
+      AUC threshold: 20.00000
+   Mean: 7.00624
+   Median: 6.88418
+   Std Dev: 3.95946
+
+Percentage of frames where PNP failed when viable (incorrect): 0.000% (0/100)
+Percentage of frames where PNP was successful when viable (correct): 100.000% (100/100)
+ADD (m) for frames where PNP was successful when viable (n = 100):
+   AUC: 0.50943
+      AUC threshold: 0.10000
+   Mean: 0.05588
+   Median: 0.04066
+   Std Dev: 0.06223
+

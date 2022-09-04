@@ -1,0 +1,44 @@
+Analysis results for dataset: /mnt/data/Dream_data_all/data/real/panda-3cam_realsense/
+Number of frames in this dataset: 5944
+Using network config defined from: /mnt/all_ckpt/yzk/original_train/original_train_yzk_lr_0.0001_bs_32_seed_5_epoch_30_try_0/epoch_2.yaml
+
+Percentage out-of-frame gt keypoints not found (correct): 100.000% (211/211)
+Percentage out-of-frame gt keypoints found (incorrect): 0.000% (0/211)
+Percentage in-frame gt keypoints not found (incorrect): 11.465% (4746/41397)
+Percentage in-frame gt keypoints found (correct): 88.535% (36651/41397)
+L2 error (px) for in-frame keypoints (n = 36651):
+   AUC: 0.56383
+      AUC threshold: 20.00000
+   Mean: 10.70884
+   Median: 5.16271
+   Std Dev: 23.01487
+
+Percentage of frames where PNP failed when viable (incorrect): 0.538% (32/5944)
+Percentage of frames where PNP was successful when viable (correct): 99.462% (5912/5944)
+ADD (m) for frames where PNP was successful when viable (n = 5912):
+   AUC: 0.30071
+      AUC threshold: 0.10000
+   Mean: 0.12350
+   Median: 0.07418
+   Std Dev: 0.14831
+
+5 best samples:
+Sample: 005088, Rank: 1, Metric: 2.475207137541742
+Sample: 005087, Rank: 2, Metric: 2.477580913473147
+Sample: 005091, Rank: 3, Metric: 2.5085158665590543
+Sample: 005093, Rank: 4, Metric: 2.558340947876683
+Sample: 005092, Rank: 5, Metric: 2.5746383873806535
+
+5 median samples:
+Sample: 004190, Rank: 2970, Metric: 7.893101405436637
+Sample: 004514, Rank: 2971, Metric: 7.894422577958138
+Sample: 001743, Rank: 2972, Metric: 7.897082282195146
+Sample: 003179, Rank: 2973, Metric: 7.897557552079694
+Sample: 003187, Rank: 2974, Metric: 7.9027795040862445
+
+5 worst samples:
+Sample: 003718, Rank: 5940, Metric: 59.604568488694134
+Sample: 003732, Rank: 5941, Metric: 61.36915030744613
+Sample: 003729, Rank: 5942, Metric: 61.694286669242366
+Sample: 003737, Rank: 5943, Metric: 62.23787632450837
+Sample: 003727, Rank: 5944, Metric: 62.297275674597735
